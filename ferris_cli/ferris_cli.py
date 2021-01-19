@@ -1,4 +1,4 @@
-from logging import StreamHandler
+import logging
 from kafka import KafkaProducer
 import json
 from datetime import datetime
@@ -7,18 +7,19 @@ import consul
 from jsonformatter import JsonFormatter
 from cloudevents.sdk.event import v03
 import os
-import logging
 import uuid
-from datetime import datetime
 import functools
 import time
-from inspect import getmembers,isfunction,ismethod
+from inspect import getmembers, isfunction, ismethod
 import sys
+
+
+logger = logging.getLogger(__name__)
 
 
 class ApplicationConfigurator():
 
-    def get(self,config_key):
+    def get(self, config_key):
         config = {}
         try:
             c = consul.Consul(host=os.environ['CONSUL_HOST'], port=os.environ['CONSUL_PORT'])
@@ -27,22 +28,32 @@ class ApplicationConfigurator():
             the_json = data['Value'].decode("utf-8")
             config = json.loads(the_json)
         except Exception as ex:
-            print('Exception in getting key')
-            print(ex)
-
+            logger.exception(f'Exception in getting key: {config_key}')
+            
         return config
 
-    def put(self,config_key, config_value):
+    def put(self, config_key, config_value):
         config = {}
         try:
             c = consul.Consul(host=os.environ['CONSUL_HOST'], port=os.environ['CONSUL_PORT'])
             index = None
             c.kv.put(config_key, config_value)
         except Exception as ex:
-            print('Exception in getting key')
-            print(ex)
+            logger.exception(f'Exception in inserting key, value pair: {config_key}, {config_value}')
 
         return config
+
+
+def on_send_success(record_metadata):
+    logger.debug("Asynch callback on sent!")
+    logger.debug(f"Topic: {record_metadata.topic}")
+    logger.debug(f"Partition: {record_metadata.partition}")
+    logger.debug(f"Offset: {record_metadata.offset}")
+    logger.debug(f"Kafka asynch sent: {record_metadata}")
+
+
+def on_send_error(excp):
+    logger.error('I am an errback, some error in publishing a message', exc_info=excp)
 
 
 class KafkaConfig(object):
@@ -59,16 +70,15 @@ class KafkaConfig(object):
             )
     def send(self, data, topic):
         if self.json:
-            result = self.producer.send(topic, key=b'log', value=data)
+            self.producer.send(topic, key=b'log', value=data).add_callback(on_send_success).add_errback(on_send_error)
         else:
-            result = self.producer.send(topic, bytes(data, 'utf-8'))
-        print("kafka send result: {}".format(result.get()))
+            self.producer.send(topic, bytes(data, 'utf-8')).add_callback(on_send_success).add_errback(on_send_error)
 
 
-class FerrisKafkaLoggingHandler(StreamHandler):
+class FerrisKafkaLoggingHandler(logging.StreamHandler):
 
-    def __init__(self,topic='ferris.logs'):
-        StreamHandler.__init__(self)
+    def __init__(self, topic='ferris.logs'):
+        logging.StreamHandler.__init__(self)
         environment = ApplicationConfigurator().get('ferris.env')
         broker_url = f"{environment['KAFKA_BOOTSTRAP_SERVER']}:{environment['KAFKA_PORT']}"
         self.topic = topic
@@ -96,23 +106,16 @@ class MetricMessage(object):
             sort_keys=True, indent=4)
 
 
-
 class MetricsAPI:
-
 
     def __init__(self, topic='ferris.metrics'):
         self.topic = topic
         # Kafka Broker Configuration
         self.kafka_broker = KafkaConfig(broker_url)
-        print('metrics init called')
+        logger.debug("MetricsAPI init called")
 
     def send(self,metric_message:MetricMessage):
-        try:
             self.kafka_broker.send(metric_message.toJSON(), self.topic)
-        except Exception as ex:
-            print('Exception in publishing message')
-            print(ex)
-
 
 
 class Notification(object):
@@ -121,7 +124,7 @@ class Notification(object):
         self.to_addr = to_addr
         self.subject = subject
         self.message_content = message_content   
-        if update_time == None:
+        if update_time == None:  # where does it come from? Is it supposed to be in the __init__ line? There is a version with it...
             dateTimeObj = datetime.now()
             timestampStr = dateTimeObj.strftime("%Y-%m-%dT%H:%M:%SZ")
             self.update_time = timestampStr
@@ -132,18 +135,14 @@ class Notification(object):
         return json.dumps(self, default=lambda o: o.__dict__, 
             sort_keys=True, indent=4)
 
+
 class NotificatonsAPI():
     def __init__(self, topic='ferris.notifications'):
         self.topic = topic
         # Kafka Broker Configuration
         self.kafka_broker = KafkaConfig(broker_url)
     def send(self, notification:Notification):
-        try:
             self.kafka_broker.send(notification.toJSON(), self.topic)
-        except Exception as ex:
-            print('Exception in publishing message')
-            print(ex)
-
 
 class CloudEventsAPI():
 
@@ -154,8 +153,6 @@ class CloudEventsAPI():
     def send(self, event):
         event.SetEventID(uuid.uuid1().hex)
         date_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-
-      
         event.SetEventTime(date_time)
         s = json.dumps(event.Properties())
         self.kafka_broker.send(s, self.topic)
@@ -165,7 +162,7 @@ class CloudEventsAPI():
 
 class ExecutionTime:
 
-    def __init__(self,console=False,module_name=None):
+    def __init__(self, console=False, module_name=None):
          
         self.module_name = module_name
         self.logtime_data = {}
@@ -200,7 +197,8 @@ class ExecutionTime:
             for name,addr in items:
                 setattr(module,name,self.timeit(addr))
         except KeyError as e:
-            raise f'Error Occured, No module by name {module_name}. If you think this was a mistake than raise issue at {self.issue_url}'
+            raise f'Error Occured, No module by name {self.module_name}. If you think this was a mistake than raise issue at {self.issue_url}'
+
 
 environment = ApplicationConfigurator().get('ferris.env')
 broker_url = f"{environment['KAFKA_BOOTSTRAP_SERVER']}:{environment['KAFKA_PORT']}"

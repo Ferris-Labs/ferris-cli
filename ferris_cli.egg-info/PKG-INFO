@@ -1,12 +1,12 @@
 Metadata-Version: 1.1
 Name: ferris-cli
-Version: 0.6.0
+Version: 0.7.0
 Summary: Utilities for working with the Ferris.ai Platform
 Home-page: https://github.com/Integration-Alpha/ferris-cli
 Author: Balaji Bal
 Author-email: bal@ballab.com
 License: Apache2.0
-Download-URL: https://github.com/Integration-Alpha/ferris-cli/archive/0.6.0.tar.gz
+Download-URL: https://github.com/Integration-Alpha/ferris-cli/archive/0.7.0.tar.gz
 Description: Utilities for working with the Ferris.ai Platform
 Platform: UNKNOWN
 Classifier: Development Status :: 3 - Alpha
